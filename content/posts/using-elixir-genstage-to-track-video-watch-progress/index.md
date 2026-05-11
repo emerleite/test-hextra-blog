@@ -68,19 +68,19 @@ Here are some snippets to show you the most relevant parts of our implementation
 
 #### Endpoint
 
-{{< link-preview url="https://medium.com/media/8571603177c3810abe5108d79188478e/href" >}}
+{{< gist emerleite 5af0dec3e5d76214a38a8ef6453fb30c >}}
 
 For the purpose of this article, I hide some code we use to sanity the input, check for parameters and other stuff. The target here is to show that we basic no hard work and just enqueue an **Event** inside the GenStage pipeline.
 
 #### GenStage Producer
 
-{{< link-preview url="https://medium.com/media/37cea323bb539a556dcac392a4af4951/href" >}}
+{{< gist emerleite 8b2537fa2f9cd8990a3907cfa6faece8 >}}
 
 Our GenStage Producer is based on the [QueueBroadcaster example](https://hexdocs.pm/gen_stage/GenStage.html). The basic difference is that we created a rule to discard some events. If a *Video Watch Progress Event* is **not processed in 11 seconds**, we have e huge chance a recent track has arrived and we can throw this one away. This strategy is how we implement [load-shedding](https://en.wikipedia.org/wiki/Load_Shedding) and is very important for peak moments, because it helps us not overload the database and continue registering the *Video Watch Progress*.
 
 #### GenStage Consumer
 
-{{< link-preview url="https://medium.com/media/7bf2b98856a064e2414bf34985e2f96d/href" >}}
+{{< gist emerleite ea527c66a95cb65bf92f61fe2dbd4472 >}}
 
 To the Consumer, we're using the ConsumerSupervisor to help us with Consumer supervision and concurrency. [The ConsumerSupervision creates one child per event, as it arrives](https://hexdocs.pm/gen_stage/ConsumerSupervisor.html). We end this workflow writing the *Video Watch Progress* to the Database.
 
@@ -90,7 +90,7 @@ The Consumer is responsible for the back-pressure using [min and max demand conf
 
 Assuming we'll always have more than one node, we develop a simple way to ensure an old *Video Watch Progress Point* do not replace a newer one. To solve this, we have a timestamp column in the database and check it before update a row. With Ecto, we did it using [on_conflict](https://hexdocs.pm/ecto/Ecto.Repo.html#c:insert/2-options) option as the code below describes:
 
-{{< link-preview url="https://medium.com/media/a41fe0ab77a447bc978c99bcf35a084d/href" >}}
+{{< gist emerleite 731647781b384d03ac375dbda7d51061 >}}
 
 ### Metrics for GenStage
 
