@@ -1,0 +1,22 @@
+baseURL = "/"
+title = "Software Sandwich"
+languageCode = "en-us"
+enableRobotsTXT = true
+
+[module]
+[[module.imports]]
+path = "github.com/imfing/hextra"
+
+[params]
+themeColor = "blue"
+
+[menu]
+[[menu.main]]
+name = "Home"
+pageRef = "/"
+weight = 1
+
+[[menu.main]]
+name = "Blog"
+pageRef = "/posts"
+weight = 2

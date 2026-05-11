@@ -1,0 +1,4 @@
+<div style="border: 1px solid #e0e0e0; border-radius: 4px; overflow: hidden; max-width: 100%; margin: 1em 0;">
+  {{ if .Get "image" }}<a href="{{ .Get "url" }}" target="_blank" rel="noopener"><img src="{{ .Get "image" }}" alt="" style="width: 100%; height: auto; display: block;" loading="lazy" /></a>{{ end }}
+  <div style="padding: 12px 16px;"><a href="{{ .Get "url" }}" target="_blank" rel="noopener" style="word-break: break-all;">{{ .Get "url" }}</a></div>
+</div>
