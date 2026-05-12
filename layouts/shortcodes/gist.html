@@ -1,9 +1,22 @@
 {{- $user := .Get 0 -}}
 {{- $id := .Get 1 -}}
-{{- $file := .Get 2 -}}
-{{- if $file -}}
-<script src="https://gist.github.com/{{ $user }}/{{ $id }}.js?file={{ $file }}"></script>
-{{- else -}}
-<script src="https://gist.github.com/{{ $user }}/{{ $id }}.js"></script>
+{{- $wantFile := .Get 2 -}}
+{{- $apiURL := printf "https://api.github.com/gists/%s" $id -}}
+{{- with try (resources.GetRemote $apiURL) -}}
+  {{- with .Err -}}
+    <div class="gist-error"><a href="https://gist.github.com/{{ $user }}/{{ $id }}" target="_blank" rel="noopener">View gist on GitHub</a></div>
+  {{- else with .Value -}}
+    {{- $gist := .Content | transform.Unmarshal -}}
+    {{- range $name, $f := $gist.files -}}
+      {{- if or (not $wantFile) (eq $name $wantFile) -}}
+        {{- $lang := lower (default "text" $f.language) -}}
+        <figure class="gist-embed" style="margin: 1.5em 0;">
+          <figcaption style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85em; padding: 0.4em 0.8em; background: rgba(127,127,127,0.08); border: 1px solid rgba(127,127,127,0.2); border-bottom: none; border-radius: 6px 6px 0 0;">
+            <a href="https://gist.github.com/{{ $user }}/{{ $id }}#file-{{ $name | urlize }}" target="_blank" rel="noopener" style="text-decoration: none;">{{ $name }}</a>
+          </figcaption>
+          {{ highlight (trim $f.content "\n") $lang "linenos=false,noClasses=false" }}
+        </figure>
+      {{- end -}}
+    {{- end -}}
+  {{- end -}}
 {{- end -}}
-<noscript><a href="https://gist.github.com/{{ $user }}/{{ $id }}" target="_blank" rel="noopener">View gist on GitHub</a></noscript>
