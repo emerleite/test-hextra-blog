@@ -2,7 +2,8 @@
 {{- $id := .Get 1 -}}
 {{- $wantFile := .Get 2 -}}
 {{- $apiURL := printf "https://api.github.com/gists/%s" $id -}}
-{{- with try (resources.GetRemote $apiURL) -}}
+{{- $opts := dict "headers" (dict "User-Agent" "Hugo-hextra-blog-layout-skill") -}}
+{{- with try (resources.GetRemote $apiURL $opts) -}}
   {{- with .Err -}}
     <div class="gist-error"><a href="https://gist.github.com/{{ $user }}/{{ $id }}" target="_blank" rel="noopener">View gist on GitHub</a></div>
   {{- else with .Value -}}
