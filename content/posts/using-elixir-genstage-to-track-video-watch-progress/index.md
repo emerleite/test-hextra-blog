@@ -68,19 +68,110 @@ Here are some snippets to show you the most relevant parts of our implementation
 
 #### Endpoint
 
-{{< gist emerleite 5af0dec3e5d76214a38a8ef6453fb30c >}}
+```elixir
+#Phoenix Action
+def track_time(conn, params) do
+  RequestParamsHandler.prepare(conn, params)
+  |> EventStore.enqueue #Send to GenStage pipeline
+  send_resp(conn, 201, "")
+end
+```
+<small>[`video_watch_progress_controller.ex` on GitHub](https://gist.github.com/emerleite/5af0dec3e5d76214a38a8ef6453fb30c)</small>
 
 For the purpose of this article, I hide some code we use to sanity the input, check for parameters and other stuff. The target here is to show that we basic no hard work and just enqueue an **Event** inside the GenStage pipeline.
 
 #### GenStage Producer
 
-{{< gist emerleite 8b2537fa2f9cd8990a3907cfa6faece8 >}}
+```elixir
+defmodule UpaEventSourcing.VideoWatchProgress.EventStore do
+  use GenStage
+
+  @event_processing_timeout 11 #Max seconds to process a track video watch progress event
+
+  def start_link() do
+    GenStage.start_link(__MODULE__, :ok, name: __MODULE__)
+  end
+
+  def init(:ok) do
+    {:producer, {:queue.new, 0, 0}, dispatcher: GenStage.BroadcastDispatcher}
+  end
+
+  def enqueue(event) do
+    GenStage.cast(__MODULE__, {:enqueue, event})
+  end
+
+  def handle_cast({:enqueue, event}, {queue, demand, queue_size}) do
+    dispatch_events(:queue.in(event, queue), demand, [], queue_size+1)
+  end
+
+  def handle_demand(incoming_demand, {queue, demand, queue_size}) do
+    dispatch_events(queue, incoming_demand + demand, [], queue_size)
+  end
+
+  defp dispatch_events(queue, demand, events, queue_size) do
+    UpaMetrics.count("gen_stage", "queue_size") #Metrics App inside Umbrella
+    with d when d > 0 <- demand,
+        {item, queue} = :queue.out(queue),
+        {:value, event} <- item do
+      case check_event(event) do
+        :expired ->
+          UpaMetrics.count("gen_stage", "discarded") #Metrics App inside Umbrella
+          dispatch_events(queue, demand, events, queue_size-1)
+        :valid ->
+          UpaMetrics.count("gen_stage", "processed") #Metrics App inside Umbrella
+          dispatch_events(queue, demand - 1, [event | events], queue_size-1)
+      end
+    else
+      _ -> {:noreply, Enum.reverse(events), {queue, demand, queue_size}}
+    end
+  end
+
+  defp check_event(event) do
+    if :os.system_time(:millisecond) > (event.last_event_timestamp + :timer.seconds(@event_processing_timeout)) do
+      :expired
+    else
+      :valid
+    end
+  end
+end
+```
+<small>[`event_store.ex` on GitHub](https://gist.github.com/emerleite/8b2537fa2f9cd8990a3907cfa6faece8)</small>
 
 Our GenStage Producer is based on the [QueueBroadcaster example](https://hexdocs.pm/gen_stage/GenStage.html). The basic difference is that we created a rule to discard some events. If a *Video Watch Progress Event* is **not processed in 11 seconds**, we have e huge chance a recent track has arrived and we can throw this one away. This strategy is how we implement [load-shedding](https://en.wikipedia.org/wiki/Load_Shedding) and is very important for peak moments, because it helps us not overload the database and continue registering the *Video Watch Progress*.
 
 #### GenStage Consumer
 
-{{< gist emerleite ea527c66a95cb65bf92f61fe2dbd4472 >}}
+```elixir
+defmodule UpaEventSourcing.VideoWatchProgress.EventAggregator do
+  def start_link(event) do
+     Task.start_link(fn ->
+       Upa.VideoWatchProgress.save(event) #Saves to the database
+     end)
+  end
+end
+
+defmodule UpaEventSourcing.VideoWatchProgress.EventConsumer do
+  use ConsumerSupervisor
+
+  alias UpaEventSourcing.VideoWatchProgress.EventStore
+  alias UpaEventSourcing.VideoWatchProgress.EventAggregator
+
+  def start_link(%{producer: EventStore, processor: EventAggregator}) do
+    children = [
+      worker(processor, [], restart: :temporary)
+    ]
+
+    ConsumerSupervisor.start_link(children,
+      strategy: :one_for_one,
+      subscribe_to: [{
+        producer,
+        min_demand: 1,
+        max_demand: 192,
+      }])
+  end
+end
+```
+<small>[`event_consumer.ex` on GitHub](https://gist.github.com/emerleite/ea527c66a95cb65bf92f61fe2dbd4472)</small>
 
 To the Consumer, we're using the ConsumerSupervisor to help us with Consumer supervision and concurrency. [The ConsumerSupervision creates one child per event, as it arrives](https://hexdocs.pm/gen_stage/ConsumerSupervisor.html). We end this workflow writing the *Video Watch Progress* to the Database.
 
@@ -90,7 +181,32 @@ The Consumer is responsible for the back-pressure using [min and max demand conf
 
 Assuming we'll always have more than one node, we develop a simple way to ensure an old *Video Watch Progress Point* do not replace a newer one. To solve this, we have a timestamp column in the database and check it before update a row. With Ecto, we did it using [on_conflict](https://hexdocs.pm/ecto/Ecto.Repo.html#c:insert/2-options) option as the code below describes:
 
-{{< gist emerleite 731647781b384d03ac375dbda7d51061 >}}
+```elixir
+defmodule Upa.VideoWatchProgress do
+  def save(attrs) do
+    struct(Upa.VideoWatchProgress, attrs)
+    |> changeset
+    |> Upa.Repo.insert(on_conflict: insert_conflict_strategy(attrs))
+    |> case do
+      {:error, _} = error -> raise Upa.DatabaseCommandError
+      {:ok, changeset} -> :ok
+    end
+  end
+
+  def insert_conflict_strategy(%{fully_watched: fully_watched}) do
+    from(v in Upa.VideoWatchProgress,
+      update: [set: [
+          milliseconds_watched: fragment("IF(last_event_timestamp < VALUES(last_event_timestamp), VALUES(milliseconds_watched), milliseconds_watched)"),
+          last_event_timestamp: fragment("IF(last_event_timestamp < VALUES(last_event_timestamp), VALUES(last_event_timestamp), last_event_timestamp)"),
+          updated_at: ^ecto_time(),
+          fully_watched: ^fully_watched
+        ]
+      ]
+    )
+  end
+end
+```
+<small>[`on_conflict.ex` on GitHub](https://gist.github.com/emerleite/731647781b384d03ac375dbda7d51061)</small>
 
 ### Metrics for GenStage
 
